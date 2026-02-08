@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Discord bot for playing chess against the Clawde engine."""
+from __future__ import annotations
 
 import os
 import asyncio

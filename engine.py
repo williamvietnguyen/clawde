@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Clawde — a UCI-compatible chess engine written in Python."""
+from __future__ import annotations
 
 import time
 import threading
@@ -181,7 +182,7 @@ class TTFlag(IntEnum):
     BETA = 2   # lower bound
 
 
-@dataclass(slots=True)
+@dataclass
 class TTEntry:
     key: int = 0
     depth: int = 0
