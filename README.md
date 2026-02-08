@@ -1,50 +1,41 @@
 # Clawde
 
-A UCI-compatible chess engine written in Python, with a Discord bot for playing against it.
+A UCI-compatible chess engine written in Python, with a Lichess bot for playing live games on lichess.org.
 
 ## Files
 
 - `engine.py` — Chess engine with iterative deepening alpha-beta search, quiescence search, transposition table, piece-square table evaluation, and full UCI protocol support
-- `bot.py` — Discord bot that lets you play against the engine via slash commands
-
-## Slash Commands
-
-| Command | What it does |
-|---------|-------------|
-| `/play` | Start a game (choose white or black) |
-| `/move` | Make a move (`e4`, `Nf3`, `O-O`, or UCI like `e2e4`) |
-| `/board` | Show the current board |
-| `/resign` | Resign the game |
-| `/moves` | Show move history |
-| `/fen` | Show the FEN string |
+- `lichess_bot.py` — Lichess bot that connects the engine to play live games via the Lichess Bot API
 
 ## Setup
 
 ### 1. Install dependencies
 
+Requires Python 3.12+.
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install chess discord.py
+pip install -r requirements.txt
 ```
 
-### 2. Create a Discord bot
+### 2. Create a Lichess BOT account
 
-1. Go to https://discord.com/developers/applications
-2. Create a new application
-3. Go to **Bot** and copy the token
-4. Go to **OAuth2 → URL Generator**, select the `bot` and `applications.commands` scopes
-5. Use the generated URL to invite the bot to your server
+1. Create a new Lichess account (or use an existing one with no rated games)
+2. Upgrade it to a BOT account via the [Lichess API](https://lichess.org/api#tag/Bot/operation/botAccountUpgrade)
+3. Generate a personal API token at https://lichess.org/account/oauth/token with the `bot:play` scope
 
 ### 3. Run the bot
 
 ```bash
 source venv/bin/activate
-export CLAWDE_BOT_TOKEN='your-token-here'
-python bot.py
+export LICHESS_BOT_TOKEN='lip_...'
+python lichess_bot.py
 ```
 
-### 4. Run on a Raspberry Pi with systemd (optional)
+The bot will connect, log "Listening for events", and accept incoming challenges automatically.
+
+### 4. Deploy on a Jetson Nano with systemd (optional)
 
 Create `/etc/systemd/system/clawde.service`:
 
@@ -54,11 +45,11 @@ Description=Clawde Chess Bot
 After=network.target
 
 [Service]
-ExecStart=/path/to/venv/bin/python /path/to/bot.py
+ExecStart=/path/to/venv/bin/python /path/to/lichess_bot.py
 WorkingDirectory=/path/to/clawde
-Environment=CLAWDE_BOT_TOKEN=your-token-here
+Environment=LICHESS_BOT_TOKEN=lip_your_token_here
 Restart=on-failure
-User=pi
+User=jetson
 
 [Install]
 WantedBy=multi-user.target
@@ -70,10 +61,6 @@ Then enable and start it:
 sudo systemctl enable clawde
 sudo systemctl start clawde
 ```
-
-## Configuration
-
-The engine thinks for 5 seconds per move by default. To tune this for your hardware, edit the `ENGINE_TIME_LIMIT` constant at the top of `bot.py`.
 
 ## UCI mode
 
