@@ -289,7 +289,7 @@ class MoveOrderer:
 # ---------------------------------------------------------------------------
 
 class Searcher:
-    def __init__(self):
+    def __init__(self, info_handler=None):
         self.tt = TranspositionTable()
         self.orderer = MoveOrderer()
         self.nodes = 0
@@ -297,6 +297,8 @@ class Searcher:
         self.best_move: chess.Move | None = None
         self.start_time = 0.0
         self.time_limit: float | None = None
+        # Optional callback for search info lines. Defaults to print() for UCI.
+        self._info_handler = info_handler or (lambda msg: print(msg, flush=True))
 
     def _check_time(self):
         if self.time_limit is not None and self.nodes & 2047 == 0:
@@ -482,10 +484,11 @@ class Searcher:
             else:
                 score_str = f"score cp {score}"
 
-            print(f"info depth {depth} {score_str} nodes {self.nodes} "
-                  f"nps {nps} time {int(elapsed * 1000)} "
-                  f"pv {best_for_iter.uci() if best_for_iter else '(none)'}",
-                  flush=True)
+            self._info_handler(
+                f"info depth {depth} {score_str} nodes {self.nodes} "
+                f"nps {nps} time {int(elapsed * 1000)} "
+                f"pv {best_for_iter.uci() if best_for_iter else '(none)'}"
+            )
 
             # If we found a forced mate, stop searching deeper
             if abs(score) >= MATE_SCORE - MAX_DEPTH:

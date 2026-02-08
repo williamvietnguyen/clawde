@@ -21,7 +21,16 @@ from engine import Searcher
 ENGINE_TIME_LIMIT = 5.0  # seconds per move (tune for your hardware)
 BOT_TOKEN_ENV = "CLAWDE_BOT_TOKEN"
 
-logging.basicConfig(level=logging.INFO)
+LOG_FILE = os.environ.get("CLAWDE_LOG_FILE", "clawde.log")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler(),
+    ],
+)
 log = logging.getLogger("clawde")
 
 # ---------------------------------------------------------------------------
@@ -32,7 +41,7 @@ log = logging.getLogger("clawde")
 @dataclass
 class GameState:
     board: chess.Board = field(default_factory=chess.Board)
-    searcher: Searcher = field(default_factory=Searcher)
+    searcher: Searcher = field(default_factory=lambda: Searcher(info_handler=log.info))
     player_color: chess.Color = chess.WHITE
     player_id: int = 0
     move_history: list[str] = field(default_factory=list)
