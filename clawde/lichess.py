@@ -28,6 +28,9 @@ ACCEPTED_SPEEDS: set[str] = {
     "bullet", "blitz", "rapid", "classical",
 }
 
+# Minimum initial time (seconds).  Decline anything shorter than this.
+MIN_INITIAL_TIME = 60  # 1 minute
+
 LOG_FILE = os.environ.get("CLAWDE_LOG_FILE", "clawde.log")
 
 logging.basicConfig(
@@ -331,6 +334,21 @@ def event_loop(token: str):
                                 f"{LICHESS_API}/api/challenge/{cid}/decline",
                                 headers=_headers(token),
                                 json={"reason": "timeControl"},
+                                timeout=10,
+                            )
+                        except requests.exceptions.RequestException:
+                            pass
+                        continue
+
+                    tc = challenge.get("timeControl", {})
+                    initial_secs = tc.get("limit", 0)
+                    if initial_secs < MIN_INITIAL_TIME:
+                        log.info("Declining challenge %s from %s (too fast: %ds)", cid, challenger, initial_secs)
+                        try:
+                            requests.post(
+                                f"{LICHESS_API}/api/challenge/{cid}/decline",
+                                headers=_headers(token),
+                                json={"reason": "tooFast"},
                                 timeout=10,
                             )
                         except requests.exceptions.RequestException:
