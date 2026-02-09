@@ -597,7 +597,7 @@ class Searcher:
         self._info_handler = info_handler or (lambda msg: print(msg, flush=True))
 
     def _check_time(self):
-        if self.time_limit is not None and self.nodes & 2047 == 0:
+        if self.time_limit is not None and self.nodes & 127 == 0:
             if time.time() - self.start_time >= self.time_limit:
                 self.stop_event.set()
 
