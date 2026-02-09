@@ -106,18 +106,18 @@ def calculate_time_limit(
         ramp = 0.4 + 0.12 * moves_out_of_book
         base_s *= ramp
 
-    # Per-move cap based on time control — keeps the engine moving
-    # at a natural pace for the format
+    # Per-move cap — a Python engine doesn't gain much depth from
+    # extra time, so keep it moving at a natural pace for the format.
     if initial_time_ms <= 60_000:            # ultrabullet
-        cap_s = 0.3
+        cap_s = 0.15
     elif initial_time_ms <= 180_000:         # bullet
-        cap_s = 1.5
+        cap_s = 0.8
     elif initial_time_ms <= 480_000:         # blitz
-        cap_s = 5.0
+        cap_s = 2.5
     elif initial_time_ms <= 900_000:         # rapid
-        cap_s = 15.0
+        cap_s = 8.0
     else:                                    # classical
-        cap_s = 60.0
+        cap_s = 20.0
 
     # Also never burn more than 15% of remaining time on one move
     ceiling_s = min(cap_s, our_time_ms * 0.15 / 1000.0)
