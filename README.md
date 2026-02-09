@@ -2,10 +2,16 @@
 
 A UCI-compatible chess engine written in Python, with a Lichess bot for playing live games on lichess.org.
 
-## Files
+## Structure
 
-- `engine.py` — Chess engine with iterative deepening alpha-beta search, quiescence search, transposition table, piece-square table evaluation, and full UCI protocol support
-- `lichess_bot.py` — Lichess bot that connects the engine to play live games via the Lichess Bot API
+```
+main.py              Entry point for both UCI and Lichess modes
+clawde/
+  engine.py          Chess engine (alpha-beta, quiescence, TT, PST, SEE, LMR)
+  uci.py             UCI protocol interface
+  book.py            Built-in opening book covering major openings
+  lichess.py         Lichess bot for live games via the Bot API
+```
 
 ## Setup
 
@@ -30,7 +36,7 @@ pip install -r requirements.txt
 ```bash
 source venv/bin/activate
 export LICHESS_BOT_TOKEN='lip_...'
-python lichess_bot.py
+python main.py lichess
 ```
 
 The bot will connect, log "Listening for events", and accept incoming challenges automatically.
@@ -45,7 +51,7 @@ Description=Clawde Chess Bot
 After=network.target
 
 [Service]
-ExecStart=/path/to/venv/bin/python /path/to/lichess_bot.py
+ExecStart=/path/to/venv/bin/python /path/to/main.py lichess
 WorkingDirectory=/path/to/clawde
 Environment=LICHESS_BOT_TOKEN=lip_your_token_here
 Restart=on-failure
@@ -68,5 +74,5 @@ The engine also works standalone with any UCI-compatible chess GUI (Arena, CuteC
 
 ```bash
 source venv/bin/activate
-python engine.py
+python main.py uci
 ```

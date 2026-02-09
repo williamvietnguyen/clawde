@@ -12,7 +12,7 @@ import time
 import chess
 import requests
 
-from engine import Searcher
+from clawde.engine import Searcher
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -58,15 +58,37 @@ def _stream_ndjson(url: str, token: str):
 
 def calculate_time_limit(
     wtime: int, btime: int, winc: int, binc: int, we_are_white: bool,
-    moves_played: int,
+    moves_played: int, initial_time: int,
 ) -> float:
-    """Return a time limit in seconds for the engine search."""
+    """Return a time limit in seconds for the engine search.
+
+    Adapts pacing to the time control: thinks quickly in bullet,
+    takes its time in classical.
+    """
     our_time = wtime if we_are_white else btime
     our_inc = winc if we_are_white else binc
-    moves_remaining = max(40 - moves_played, 10)
+
+    # Scale pacing to the time control (initial_time is in ms)
+    if initial_time <= 60_000:        # ultrabullet (<=1 min)
+        target_moves = 50
+        min_time = 0.1
+    elif initial_time <= 180_000:     # bullet (<=3 min)
+        target_moves = 40
+        min_time = 0.2
+    elif initial_time <= 480_000:     # blitz (<=8 min)
+        target_moves = 35
+        min_time = 0.5
+    elif initial_time <= 900_000:     # rapid (<=15 min)
+        target_moves = 30
+        min_time = 1.0
+    else:                             # classical
+        target_moves = 25
+        min_time = 2.0
+
+    moves_remaining = max(target_moves - moves_played, 10)
     time_limit = (our_time / (moves_remaining + 10) + our_inc * 0.8) / 1000.0
     time_limit = min(time_limit, our_time / 2000.0)
-    time_limit = max(time_limit, 0.5)
+    time_limit = max(time_limit, min_time)
     return time_limit
 
 
@@ -81,6 +103,7 @@ def handle_game(game_id: str, token: str):
     searcher = Searcher(info_handler=log.debug)
     board = chess.Board()
     we_are_white = True
+    initial_time = 300_000  # default 5 min if clock info missing
 
     try:
         for event in _stream_ndjson(f"{LICHESS_API}/api/bot/game/stream/{game_id}", token):
@@ -94,6 +117,10 @@ def handle_game(game_id: str, token: str):
                 color_str = "white" if we_are_white else "black"
                 log.info("Game %s: playing as %s", game_id, color_str)
 
+                # Extract initial clock for time management pacing
+                clock = event.get("clock") or {}
+                initial_time = clock.get("initial", 300_000)
+
                 # Reconstruct board from moves so far
                 board = chess.Board()
                 moves_str = event.get("state", {}).get("moves", "")
@@ -101,9 +128,8 @@ def handle_game(game_id: str, token: str):
                     for uci in moves_str.split():
                         board.push_uci(uci)
 
-                # Extract time info from initial state and maybe move
                 state = event.get("state", {})
-                _maybe_move(board, searcher, game_id, token, we_are_white, state)
+                _maybe_move(board, searcher, game_id, token, we_are_white, state, initial_time)
 
             elif etype == "gameState":
                 # Rebuild board from full moves string
@@ -118,7 +144,7 @@ def handle_game(game_id: str, token: str):
                     log.info("Game %s: ended with status %s", game_id, status)
                     return
 
-                _maybe_move(board, searcher, game_id, token, we_are_white, event)
+                _maybe_move(board, searcher, game_id, token, we_are_white, event, initial_time)
 
             elif etype == "chatLine":
                 pass  # Ignore chat
@@ -144,6 +170,7 @@ def _maybe_move(
     token: str,
     we_are_white: bool,
     state: dict,
+    initial_time: int,
 ):
     """If it's our turn and the game isn't over, search and play a move."""
     if board.is_game_over():
@@ -159,7 +186,7 @@ def _maybe_move(
     winc = state.get("winc", 0)
     binc = state.get("binc", 0)
 
-    time_limit = calculate_time_limit(wtime, btime, winc, binc, we_are_white, moves_played)
+    time_limit = calculate_time_limit(wtime, btime, winc, binc, we_are_white, moves_played, initial_time)
     log.info("Game %s: thinking (%.1fs limit, %dms on clock)",
              game_id, time_limit,
              wtime if we_are_white else btime)
@@ -283,7 +310,3 @@ def main():
         sys.exit(1)
 
     event_loop(token)
-
-
-if __name__ == "__main__":
-    main()
