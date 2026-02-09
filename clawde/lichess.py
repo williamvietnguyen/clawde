@@ -22,6 +22,12 @@ from clawde.engine import Searcher
 LICHESS_API = "https://lichess.org"
 TOKEN_ENV = "LICHESS_BOT_TOKEN"
 
+# Accepted Lichess speed categories.  Challenges outside this set are declined.
+# Valid values: ultraBullet, bullet, blitz, rapid, classical, correspondence
+ACCEPTED_SPEEDS: set[str] = {
+    "bullet", "blitz", "rapid", "classical",
+}
+
 LOG_FILE = os.environ.get("CLAWDE_LOG_FILE", "clawde.log")
 
 logging.basicConfig(
@@ -100,8 +106,21 @@ def calculate_time_limit(
         ramp = 0.4 + 0.12 * moves_out_of_book
         base_s *= ramp
 
-    # Hard ceiling: never burn more than 15% of remaining time on one move
-    ceiling_s = our_time_ms * 0.15 / 1000.0
+    # Per-move cap based on time control — keeps the engine moving
+    # at a natural pace for the format
+    if initial_time_ms <= 60_000:            # ultrabullet
+        cap_s = 0.3
+    elif initial_time_ms <= 180_000:         # bullet
+        cap_s = 1.5
+    elif initial_time_ms <= 480_000:         # blitz
+        cap_s = 5.0
+    elif initial_time_ms <= 900_000:         # rapid
+        cap_s = 15.0
+    else:                                    # classical
+        cap_s = 60.0
+
+    # Also never burn more than 15% of remaining time on one move
+    ceiling_s = min(cap_s, our_time_ms * 0.15 / 1000.0)
     base_s = min(base_s, ceiling_s)
 
     # Floor: always think at least a minimum amount
@@ -290,6 +309,8 @@ def event_loop(token: str):
                     challenger = challenge.get("challenger", {}).get("name", "?")
                     variant = challenge.get("variant", {}).get("key", "?")
 
+                    speed = challenge.get("speed", "?")
+
                     if variant != "standard":
                         log.info("Declining challenge %s from %s (variant: %s)", cid, challenger, variant)
                         try:
@@ -303,7 +324,20 @@ def event_loop(token: str):
                             pass
                         continue
 
-                    log.info("Accepting challenge %s from %s", cid, challenger)
+                    if speed not in ACCEPTED_SPEEDS:
+                        log.info("Declining challenge %s from %s (speed: %s)", cid, challenger, speed)
+                        try:
+                            requests.post(
+                                f"{LICHESS_API}/api/challenge/{cid}/decline",
+                                headers=_headers(token),
+                                json={"reason": "timeControl"},
+                                timeout=10,
+                            )
+                        except requests.exceptions.RequestException:
+                            pass
+                        continue
+
+                    log.info("Accepting challenge %s from %s (%s)", cid, challenger, speed)
                     try:
                         resp = requests.post(
                             f"{LICHESS_API}/api/challenge/{cid}/accept",
