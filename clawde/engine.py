@@ -11,8 +11,6 @@ from enum import IntEnum
 import chess
 import chess.polyglot
 
-from clawde import book
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -794,12 +792,6 @@ class Searcher:
     def search(self, board: chess.Board, max_depth: int = MAX_DEPTH,
                time_limit: float | None = None) -> chess.Move:
         """Iterative-deepening search. Returns the best move found."""
-        # Probe the opening book first
-        book_move = book.probe(board)
-        if book_move is not None and book_move in board.legal_moves:
-            self._info_handler("info string book move %s" % book_move.uci())
-            return book_move
-
         self.nodes = 0
         self.stop_event.clear()
         self.start_time = time.time()

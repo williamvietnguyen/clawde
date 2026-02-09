@@ -5,6 +5,7 @@ import threading
 
 import chess
 
+from clawde import book
 from clawde.engine import MAX_DEPTH, Searcher
 
 
@@ -80,6 +81,11 @@ class UCI:
             time_limit = max(time_limit, 0.05)
 
         def search_and_report():
+            book_move = book.probe(self.board)
+            if book_move is not None and book_move in self.board.legal_moves:
+                self._send(f"info string book move {book_move.uci()}")
+                self._send(f"bestmove {book_move.uci()}")
+                return
             move = self.searcher.search(self.board, max_depth, time_limit)
             self._send(f"bestmove {move.uci()}")
 

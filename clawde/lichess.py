@@ -12,6 +12,7 @@ import time
 import chess
 import requests
 
+from clawde import book
 from clawde.engine import Searcher
 
 # ---------------------------------------------------------------------------
@@ -57,39 +58,54 @@ def _stream_ndjson(url: str, token: str):
 
 
 def calculate_time_limit(
-    wtime: int, btime: int, winc: int, binc: int, we_are_white: bool,
-    moves_played: int, initial_time: int,
+    our_time_ms: int,
+    our_inc_ms: int,
+    initial_time_ms: int,
+    moves_played: int,
+    moves_out_of_book: int,
 ) -> float:
     """Return a time limit in seconds for the engine search.
 
-    Adapts pacing to the time control: thinks quickly in bullet,
-    takes its time in classical.
+    Uses a simple model: spread remaining time evenly over estimated
+    remaining moves, plus most of the increment.  After leaving the
+    opening book the engine ramps up gradually over several moves so
+    the transition from instant book moves to real search feels natural.
     """
-    our_time = wtime if we_are_white else btime
-    our_inc = winc if we_are_white else binc
+    # Estimate how many moves remain based on time control.
+    # Faster games → more moves (less time to find wins → longer games).
+    if initial_time_ms <= 60_000:          # ultrabullet
+        expected_total = 100
+        floor_s = 0.05
+    elif initial_time_ms <= 180_000:       # bullet
+        expected_total = 80
+        floor_s = 0.1
+    elif initial_time_ms <= 480_000:       # blitz
+        expected_total = 60
+        floor_s = 0.25
+    elif initial_time_ms <= 900_000:       # rapid
+        expected_total = 50
+        floor_s = 0.5
+    else:                                  # classical
+        expected_total = 40
+        floor_s = 1.0
 
-    # Scale pacing to the time control (initial_time is in ms)
-    if initial_time <= 60_000:        # ultrabullet (<=1 min)
-        target_moves = 50
-        min_time = 0.1
-    elif initial_time <= 180_000:     # bullet (<=3 min)
-        target_moves = 40
-        min_time = 0.2
-    elif initial_time <= 480_000:     # blitz (<=8 min)
-        target_moves = 35
-        min_time = 0.5
-    elif initial_time <= 900_000:     # rapid (<=15 min)
-        target_moves = 30
-        min_time = 1.0
-    else:                             # classical
-        target_moves = 25
-        min_time = 2.0
+    moves_left = max(expected_total - moves_played, 10)
 
-    moves_remaining = max(target_moves - moves_played, 10)
-    time_limit = (our_time / (moves_remaining + 10) + our_inc * 0.8) / 1000.0
-    time_limit = min(time_limit, our_time / 2000.0)
-    time_limit = max(time_limit, min_time)
-    return time_limit
+    # Base allocation: even share of remaining time + most of increment.
+    # The 0.9 factor keeps a 10% buffer so we don't flag.
+    base_s = (our_time_ms * 0.9 / moves_left + our_inc_ms * 0.8) / 1000.0
+
+    # Ramp up after leaving book: 40% → 100% over 5 moves
+    if moves_out_of_book < 5:
+        ramp = 0.4 + 0.12 * moves_out_of_book
+        base_s *= ramp
+
+    # Hard ceiling: never burn more than 15% of remaining time on one move
+    ceiling_s = our_time_ms * 0.15 / 1000.0
+    base_s = min(base_s, ceiling_s)
+
+    # Floor: always think at least a minimum amount
+    return max(base_s, floor_s)
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +120,7 @@ def handle_game(game_id: str, token: str):
     board = chess.Board()
     we_are_white = True
     initial_time = 300_000  # default 5 min if clock info missing
+    book_exit_ply: int | None = None  # ply when we first left the book
 
     try:
         for event in _stream_ndjson(f"{LICHESS_API}/api/bot/game/stream/{game_id}", token):
@@ -129,7 +146,10 @@ def handle_game(game_id: str, token: str):
                         board.push_uci(uci)
 
                 state = event.get("state", {})
-                _maybe_move(board, searcher, game_id, token, we_are_white, state, initial_time)
+                book_exit_ply = _maybe_move(
+                    board, searcher, game_id, token, we_are_white,
+                    state, initial_time, book_exit_ply,
+                )
 
             elif etype == "gameState":
                 # Rebuild board from full moves string
@@ -144,7 +164,10 @@ def handle_game(game_id: str, token: str):
                     log.info("Game %s: ended with status %s", game_id, status)
                     return
 
-                _maybe_move(board, searcher, game_id, token, we_are_white, event, initial_time)
+                book_exit_ply = _maybe_move(
+                    board, searcher, game_id, token, we_are_white,
+                    event, initial_time, book_exit_ply,
+                )
 
             elif etype == "chatLine":
                 pass  # Ignore chat
@@ -171,30 +194,55 @@ def _maybe_move(
     we_are_white: bool,
     state: dict,
     initial_time: int,
-):
-    """If it's our turn and the game isn't over, search and play a move."""
+    book_exit_ply: int | None,
+) -> int | None:
+    """If it's our turn and the game isn't over, play a move.
+
+    Returns the updated *book_exit_ply* so the caller can track it.
+    """
     if board.is_game_over():
-        return
+        return book_exit_ply
 
     our_turn = (board.turn == chess.WHITE) == we_are_white
     if not our_turn:
-        return
+        return book_exit_ply
 
+    current_ply = len(board.move_stack)
+
+    # --- Try the opening book first ---
+    book_move = book.probe(board)
+    if book_move is not None and book_move in board.legal_moves:
+        uci = book_move.uci()
+        log.info("Game %s: book move %s", game_id, uci)
+        _send_move(game_id, token, uci)
+        return book_exit_ply  # still in book
+
+    # First time out of book — record the ply
+    if book_exit_ply is None:
+        book_exit_ply = current_ply
+        log.info("Game %s: leaving book at ply %d", game_id, current_ply)
+
+    # --- Time management ---
     moves_played = board.fullmove_number
-    wtime = state.get("wtime", 60000)
-    btime = state.get("btime", 60000)
-    winc = state.get("winc", 0)
-    binc = state.get("binc", 0)
+    our_time = state.get("wtime", 60000) if we_are_white else state.get("btime", 60000)
+    our_inc = state.get("winc", 0) if we_are_white else state.get("binc", 0)
+    moves_out_of_book = current_ply - book_exit_ply
 
-    time_limit = calculate_time_limit(wtime, btime, winc, binc, we_are_white, moves_played, initial_time)
-    log.info("Game %s: thinking (%.1fs limit, %dms on clock)",
-             game_id, time_limit,
-             wtime if we_are_white else btime)
+    time_limit = calculate_time_limit(
+        our_time, our_inc, initial_time, moves_played, moves_out_of_book,
+    )
+    log.info("Game %s: thinking (%.2fs limit, %dms on clock, %d moves out of book)",
+             game_id, time_limit, our_time, moves_out_of_book)
 
     move = searcher.search(board, time_limit=time_limit)
     uci = move.uci()
     log.info("Game %s: playing %s", game_id, uci)
+    _send_move(game_id, token, uci)
+    return book_exit_ply
 
+
+def _send_move(game_id: str, token: str, uci: str):
+    """POST a move to the Lichess API."""
     try:
         resp = requests.post(
             f"{LICHESS_API}/api/bot/game/{game_id}/move/{uci}",
